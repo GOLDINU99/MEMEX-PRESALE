@@ -115,14 +115,7 @@
       padding:16px;
     }
     .lbl{display:block; margin:10px 0 6px; color:var(--muted); font-size:13px}
-    .row{display:flex; gap:10px; align-items:center}
-    .addr{
-      flex:1; padding:12px 12px; border-radius:12px;
-      border: 1px solid rgba(255,255,255,.14);
-      background: rgba(8,10,18,.55);
-      color: var(--text);
-      font-size:13px; word-break:break-all;
-    }
+
     input{
       width:100%;
       padding:12px 12px;
@@ -134,6 +127,7 @@
       font-size:14px;
     }
     input:focus{border-color: rgba(0,245,255,.25)}
+
     button{
       cursor:pointer;
       border-radius:12px;
@@ -200,6 +194,7 @@
       color: var(--muted);
       line-height:1.4;
     }
+
     footer{margin-top:18px; text-align:center; color:var(--muted); font-size:12px; padding:10px 0;}
   </style>
 </head>
@@ -282,16 +277,11 @@
       <aside class="card">
         <div class="box">
           <h3 style="margin:0 0 6px;">Buy / Join Presale</h3>
-          <div class="tiny">Best mobile experience: open inside Phantom browser.</div>
-
-          <label class="lbl">Presale Address</label>
-          <div class="row">
-            <div id="addr" class="addr"></div>
-            <button id="btnCopy" class="ghost">Copy</button>
+          <div class="tiny">
+            This page works best inside Phantom Browser.
           </div>
 
           <div class="btnRow">
-            <button id="btnOpenPhantom" class="ghost">OPEN IN PHANTOM</button>
             <button id="btnRefresh" class="danger">REFRESH</button>
           </div>
 
@@ -302,16 +292,12 @@
             <button id="btnDisconnect" class="ghost" disabled>DISCONNECT</button>
           </div>
 
-          <!-- ✅ QUICK BUTTONS (max 5 SOL) -->
+          <!-- QUICK BUTTONS -->
           <label class="lbl">Quick Amount</label>
           <div class="btnRow" style="margin-top:6px;">
             <button type="button" class="ghost" data-amt="0.2">0.2</button>
             <button type="button" class="ghost" data-amt="0.5">0.5</button>
             <button type="button" class="ghost" data-amt="1">1</button>
-          </div>
-          <div class="btnRow" style="margin-top:8px;">
-            <button type="button" class="ghost" data-amt="2">2</button>
-            <button type="button" class="ghost" data-amt="5">5</button>
           </div>
 
           <label class="lbl">Amount (SOL) — min 0.2</label>
@@ -350,12 +336,12 @@
 
   <script>
     // ======================
-    // CONFIG (UPDATED)
+    // CONFIG (HIDDEN TREASURY)
     // ======================
     const CONFIG = {
       TREASURY_ADDRESS: "FBZQZgu2bkbFv3Fjgkoyjh1ZWToCxRrjSk2joFmrMAb9",
 
-      // ✅ RPC fallback list (fix 403)
+      // RPC fallback list (handles 403 + Load failed)
       RPC_LIST: [
         "https://rpc.ankr.com/solana",
         "https://solana.public-rpc.com",
@@ -380,9 +366,6 @@
     // DOM
     // ======================
     const yearEl = document.getElementById("year");
-    const addrEl = document.getElementById("addr");
-    const btnCopy = document.getElementById("btnCopy");
-    const btnOpenPhantom = document.getElementById("btnOpenPhantom");
     const btnRefresh = document.getElementById("btnRefresh");
 
     const btnConnect = document.getElementById("btnConnect");
@@ -410,13 +393,12 @@
     const phase3CountdownEl = document.getElementById("phase3Countdown");
 
     yearEl.textContent = new Date().getFullYear();
-    addrEl.textContent = CONFIG.TREASURY_ADDRESS;
 
     function setStatus(msg){ statusEl.textContent = msg; }
     function setWalletInfo(msg){ walletInfoEl.textContent = msg; }
     function shortAddr(a){ return a.slice(0,4) + "..." + a.slice(-4); }
 
-    // ✅ robust input parsing (comma or dot)
+    // robust input parsing (comma or dot)
     function parseSolInput(v){
       const s = String(v || "")
         .trim()
@@ -425,7 +407,7 @@
       return Number(s);
     }
 
-    // ✅ quick amount buttons
+    // quick amount buttons
     document.querySelectorAll("button[data-amt]").forEach(btn => {
       btn.addEventListener("click", () => {
         amountEl.value = btn.getAttribute("data-amt");
@@ -444,6 +426,42 @@
     function rotateRpc(){
       rpcIndex = (rpcIndex + 1) % CONFIG.RPC_LIST.length;
       connection = new Connection(CONFIG.RPC_LIST[rpcIndex], "confirmed");
+    }
+
+    function isRpcNetworkError(e){
+      const msg = String(e?.message || e || "").toLowerCase();
+      return (
+        msg.includes("403") ||
+        msg.includes("forbidden") ||
+        msg.includes("load failed") ||
+        msg.includes("failed to fetch") ||
+        msg.includes("networkerror") ||
+        msg.includes("timeout")
+      );
+    }
+
+    async function withRpcFailover(fn, tries = CONFIG.RPC_LIST.length){
+      let lastErr = null;
+      for (let i = 0; i < tries; i++){
+        try{
+          return await fn();
+        }catch(e){
+          lastErr = e;
+          if (isRpcNetworkError(e)) {
+            rotateRpc();
+            continue;
+          }
+          throw e; // non-network error
+        }
+      }
+      throw lastErr || new Error("RPC failed");
+    }
+
+    async function getBlockhashWithRetry(){
+      return await withRpcFailover(async () => {
+        const res = await connection.getLatestBlockhash("confirmed");
+        return res.blockhash;
+      });
     }
 
     function getProvider(){
@@ -485,42 +503,21 @@
     btnConnect.addEventListener("click", connectWallet);
     btnDisconnect.addEventListener("click", disconnectWallet);
 
-    btnOpenPhantom.addEventListener("click", () => {
-      setStatus("Opening Phantom… If it doesn't open, use Copy and open in Phantom manually.");
-      const url = "https://phantom.app/ul/browse/" + encodeURIComponent(window.location.href) + "?ref=memex";
-      window.location.href = url;
-    });
-
-    btnCopy.addEventListener("click", async () => {
-      try {
-        await navigator.clipboard.writeText(CONFIG.TREASURY_ADDRESS);
-        setStatus("Presale address copied ✅");
-      } catch {
-        setStatus("Copy failed. Please copy manually.");
-      }
-    });
-
-    // ✅ MAX with RPC rotate on 403
+    // MAX (balance) with RPC failover
     btnMax.addEventListener("click", async () => {
       if (!walletPublicKey) { setStatus("Connect wallet first."); return; }
       try{
-        const bal = await connection.getBalance(walletPublicKey, "confirmed");
+        const bal = await withRpcFailover(() => connection.getBalance(walletPublicKey, "confirmed"));
         const sol = bal / LAMPORTS_PER_SOL;
         const max = Math.max(0, sol - 0.00005); // fee buffer
-        // keep it user-friendly: show 4 decimals (still allows comma input if they edit)
         amountEl.value = max.toFixed(4);
         setStatus("Max amount filled (fee reserved).");
       }catch(e){
-        const msg = String(e?.message || e || "");
-        if (msg.includes("403") || msg.toLowerCase().includes("forbidden")) {
-          rotateRpc();
-          setStatus("RPC switched (403). Tap MAX again.");
-        } else {
-          setStatus("Could not fetch balance: " + (e?.message || "unknown"));
-        }
+        setStatus("Could not fetch balance. Try again.");
       }
     });
 
+    // SEND: signAndSendTransaction (more stable on mobile)
     btnSend.addEventListener("click", async () => {
       provider = getProvider();
       if (!provider) { setStatus("Phantom not found."); return; }
@@ -543,34 +540,30 @@
         );
 
         tx.feePayer = walletPublicKey;
-        const { blockhash } = await connection.getLatestBlockhash("finalized");
-        tx.recentBlockhash = blockhash;
+        tx.recentBlockhash = await getBlockhashWithRetry();
 
         setStatus("Approve in Phantom…");
-        const signed = await provider.signTransaction(tx);
 
-        const sig = await connection.sendRawTransaction(signed.serialize());
+        // Phantom sends directly
+        const res = await provider.signAndSendTransaction(tx);
+        const sig = res?.signature || res;
+
         setStatus("Sent. Waiting confirmation… TX: " + sig);
 
-        const conf = await connection.confirmTransaction(sig, "confirmed");
-        if (conf.value.err) {
-          setStatus("Transaction failed. Try again.");
-          return;
-        }
-
+        await withRpcFailover(() => connection.confirmTransaction(sig, "confirmed"));
         setStatus("Confirmed ✅ TX: " + sig + " (save this)");
+
         await refreshRaised(true);
       }catch(e){
-        const msg = String(e?.message || e || "");
-        if (msg.includes("403") || msg.toLowerCase().includes("forbidden")) {
-          rotateRpc();
-          setStatus("RPC switched (403). Try again.");
+        if (isRpcNetworkError(e)) {
+          setStatus("Network/RPC issue. Try again in 3–5 seconds.");
         } else {
           setStatus("Error: " + (e?.message || "unknown"));
         }
       }
     });
 
+    // auto-connect if trusted
     (async () => {
       provider = getProvider();
       if (provider && provider.isPhantom) {
@@ -654,7 +647,7 @@
     // ======================
     // Live raised calc (incoming SOL) with caching
     // ======================
-    const CACHE_KEY = "memex_presale_cache_v2";
+    const CACHE_KEY = "memex_presale_cache_v3";
 
     function loadCache(){
       try{
@@ -676,25 +669,24 @@
       let processed = 0;
 
       while (processed < CONFIG.MAX_NEW_SIGS_PER_REFRESH) {
-        const sigs = await connection.getSignaturesForAddress(
-          treasuryPk,
-          { limit, before },
-          "confirmed"
+        const sigs = await withRpcFailover(() =>
+          connection.getSignaturesForAddress(treasuryPk, { limit, before }, "confirmed")
         );
+
         if (!sigs || sigs.length === 0) break;
 
         for (const s of sigs) {
           const sig = s.signature;
 
-          if (cache.seen[sig]) return;
+          if (cache.seen[sig]) return; // stop when we hit known sig
 
           cache.seen[sig] = 1;
           processed++;
 
-          const tx = await connection.getTransaction(sig, {
-            commitment: "confirmed",
-            maxSupportedTransactionVersion: 0
-          });
+          const tx = await withRpcFailover(() =>
+            connection.getTransaction(sig, { commitment:"confirmed", maxSupportedTransactionVersion: 0 })
+          );
+
           if (!tx || !tx.meta) continue;
 
           const msg = tx.transaction.message;
@@ -741,13 +733,7 @@
 
         if (showStatus) setStatus("Updated ✅");
       }catch(e){
-        const msg = String(e?.message || e || "");
-        if (msg.includes("403") || msg.toLowerCase().includes("forbidden")) {
-          rotateRpc();
-          if (showStatus) setStatus("RPC switched (403). Refresh again.");
-        } else {
-          if (showStatus) setStatus("Refresh error: " + (e?.message || "unknown"));
-        }
+        if (showStatus) setStatus("Refresh error. Try again.");
       }finally{
         refreshLock = false;
       }
@@ -755,7 +741,7 @@
 
     btnRefresh.addEventListener("click", () => refreshRaised(true));
 
-    // initial UI
+    // initial
     updateAllUI(0);
     refreshRaised(false);
     setInterval(() => refreshRaised(false), CONFIG.AUTO_REFRESH_MS);
